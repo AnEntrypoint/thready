@@ -1,25 +1,28 @@
-import { ACPProtocol, createSimulativeRetriever, processChat } from './core.js';
+import { ACPProtocol } from './core.js';
 
-export { ACPProtocol, createSimulativeRetriever, processChat };
+export { ACPProtocol };
 
 /*
- * ACP SDK Usage Examples
+ * acpreact - ACP SDK for registering tools
  *
  * Basic usage:
- *   import { ACPProtocol, createSimulativeRetriever, processChat } from 'acpreact';
+ *   import { ACPProtocol } from 'acpreact';
  *
- * Create and use ACP Protocol:
+ * Create ACP Protocol instance:
  *   const acp = new ACPProtocol();
- *   const response = acp.createInitializeResponse();
- *   const result = await acp.callTool('simulative_retriever', { query: 'test' });
  *
- * Create tool definition:
- *   const tool = createSimulativeRetriever();
- *
- * Process chat content:
- *   const chatContent = "[14:23] alice: Where is Taj Mahal?\n[14:24] bob: Main Street";
- *   const result = await processChat(chatContent, {
- *     onToolCall: (toolName, args) => console.log(toolName, args)
+ * Register custom tools:
+ *   acp.registerTool('my_tool', 'Tool description', {
+ *     type: 'object',
+ *     properties: { query: { type: 'string' } },
+ *     required: ['query']
+ *   }, async (params) => {
+ *     return { result: 'processed' };
  *   });
- *   console.log(result.answer);
+ *
+ * Initialize protocol:
+ *   const response = acp.createInitializeResponse();
+ *
+ * Execute tool:
+ *   const result = await acp.callTool('my_tool', { query: 'test' });
  */

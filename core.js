@@ -1,12 +1,10 @@
 class ACPProtocol {
   constructor() {
     this.messageId = 0;
-    this.toolWhitelist = new Set(['simulative_retriever']);
+    this.toolWhitelist = new Set();
     this.toolCallLog = [];
     this.rejectedCallLog = [];
-    this.tools = {
-      simulative_retriever: this.simulativeRetriever.bind(this),
-    };
+    this.tools = {};
   }
 
   generateRequestId() {
@@ -41,14 +39,30 @@ class ACPProtocol {
     };
   }
 
+  registerTool(name, description, inputSchema, handler) {
+    this.toolWhitelist.add(name);
+    this.tools[name] = handler;
+    return {
+      name,
+      description,
+      inputSchema,
+    };
+  }
+
   createInitializeResponse() {
+    const agentCapabilities = Array.from(this.toolWhitelist).map(toolName => ({
+      type: "tool",
+      name: toolName,
+      whitelisted: true,
+    }));
+
     return {
       jsonrpc: "2.0",
       id: 0,
       result: {
         protocolVersion: "1.0",
         serverInfo: {
-          name: "OpenCode ACP Server",
+          name: "acpreact ACP Server",
           version: "1.0.0",
         },
         securityConfiguration: {
@@ -56,56 +70,8 @@ class ACPProtocol {
           allowedTools: Array.from(this.toolWhitelist),
           rejectionBehavior: "strict",
         },
-        agentCapabilities: [
-          {
-            type: "tool",
-            name: "simulative_retriever",
-            description: "Retrieve business information from a simulated database",
-            whitelisted: true,
-            inputSchema: {
-              type: "object",
-              properties: {
-                query: {
-                  type: "string",
-                  description: "The search query",
-                },
-              },
-              required: ["query"],
-            },
-            outputSchema: {
-              type: "object",
-              properties: {
-                success: { type: "boolean" },
-                result: { type: "string" },
-                details: { type: "string" },
-              },
-              required: ["success", "result", "details"],
-            },
-          },
-        ],
+        agentCapabilities,
       },
-    };
-  }
-
-  simulativeRetriever(query) {
-    const lowerQuery = query.toLowerCase();
-    if (
-      (lowerQuery.includes("taj mahal") &&
-        lowerQuery.includes("main street")) &&
-      (lowerQuery.includes("phone") ||
-        lowerQuery.includes("number") ||
-        lowerQuery.includes("contact"))
-    ) {
-      return {
-        success: true,
-        result: "555-0142",
-        details: "Found phone number for Taj Mahal on Main Street: 555-0142",
-      };
-    }
-    return {
-      success: false,
-      result: null,
-      details: `Information not found in database for query: "${query}"`,
     };
   }
 
@@ -133,12 +99,12 @@ class ACPProtocol {
     this.toolCallLog.push({
       timestamp: new Date().toISOString(),
       toolName,
-      query: params.query,
+      params,
       status: 'executing',
     });
 
     if (this.tools[toolName]) {
-      const result = this.tools[toolName](params.query);
+      const result = await this.tools[toolName](params);
       const lastLog = this.toolCallLog[this.toolCallLog.length - 1];
       lastLog.status = 'completed';
       lastLog.result = result;
@@ -148,44 +114,4 @@ class ACPProtocol {
   }
 }
 
-function createSimulativeRetriever() {
-  return {
-    name: "simulative_retriever",
-    description: "Retrieve business information from a simulated database",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "The search query (e.g., 'Taj Mahal phone number')",
-        },
-      },
-      required: ["query"],
-    },
-  };
-}
-
-async function processChat(chatContent, options = {}) {
-  const acp = new ACPProtocol();
-  const toolCalls = [];
-  const answer = chatContent;
-
-  const onToolCall = options.onToolCall || (() => {});
-
-  if (options.onToolCall) {
-    toolCalls.push({
-      timestamp: new Date().toISOString(),
-      content: chatContent.substring(0, 100),
-    });
-    onToolCall('analyze', { content: chatContent });
-  }
-
-  return {
-    answer,
-    toolCalls,
-    logs: acp.toolCallLog,
-    rejectedLogs: acp.rejectedCallLog,
-  };
-}
-
-export { ACPProtocol, createSimulativeRetriever, processChat };
+export { ACPProtocol };

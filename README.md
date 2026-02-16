@@ -1,13 +1,13 @@
 # acpreact - ACP SDK
 
-A clean, production-ready SDK for implementing ACP (AI Control Protocol) with function-based chat analysis.
+A lightweight SDK for setting up tools and managing ACP protocol communication. Allows opencode to call registered tools via the ACP protocol.
 
 ## Features
 
 - **ACPProtocol**: Core ACP protocol implementation with JSON-RPC 2.0 support
-- **processChat**: Analyze chat content with tool invocation and whitelist enforcement
-- **Tool Factory**: Create tool definitions for ACP integration
+- **Tool Registration**: Register custom tools with descriptions and input schemas
 - **Tool Whitelist**: Built-in security model for controlling tool access
+- **Tool Execution**: Execute whitelisted tools with validation
 - **ES Module**: Pure ES modules, no build step required
 
 ## Installation
@@ -18,86 +18,120 @@ npm install acpreact
 
 ## Quick Start
 
-### Processing Chat Content
-
-```javascript
-import { processChat } from 'acpreact';
-
-const chatContent = "[14:23] alice: Where is Taj Mahal?\n[14:24] bob: Main Street";
-const result = await processChat(chatContent, {
-  onToolCall: (toolName, args) => console.log('Tool:', toolName, args)
-});
-console.log(result.answer);
-```
-
-### Using ACPProtocol
+### Creating an ACP Server with Custom Tools
 
 ```javascript
 import { ACPProtocol } from 'acpreact';
 
 const acp = new ACPProtocol();
+
+// Register a custom tool
+acp.registerTool(
+  'weather',
+  'Get weather information for a location',
+  {
+    type: 'object',
+    properties: {
+      location: { type: 'string', description: 'City name' }
+    },
+    required: ['location']
+  },
+  async (params) => {
+    return {
+      location: params.location,
+      temperature: 72,
+      condition: 'sunny'
+    };
+  }
+);
+
+// Initialize protocol response
 const response = acp.createInitializeResponse();
-const result = await acp.callTool('simulative_retriever', {
-  query: 'Taj Mahal Main Street phone number'
-});
-```
 
-### Creating Tool Definitions
-
-```javascript
-import { createSimulativeRetriever } from 'acpreact';
-
-const tool = createSimulativeRetriever();
-// Use in your ACP setup
+// Execute tool
+const result = await acp.callTool('weather', { location: 'San Francisco' });
+console.log(result);
 ```
 
 ## API
 
-### processChat(chatContent, options)
-
-Process chat content with tool invocation and analysis.
-
-**Parameters:**
-- `chatContent`: String containing chat messages
-- `options`: Optional configuration object
-  - `onToolCall(toolName, args)`: Callback when a tool is invoked
-  - `systemPrompt`: Custom system prompt for analysis
-
-**Returns:** Promise resolving to object with:
-- `answer`: Processed chat analysis
-- `toolCalls`: Array of tool invocations
-- `logs`: Tool execution log
-- `rejectedLogs`: Failed tool call attempts
-
-**Example:**
-```javascript
-const result = await processChat(chatContent, {
-  onToolCall: (name, args) => console.log(`Called: ${name}`)
-});
-```
-
 ### ACPProtocol
 
-Main protocol handler for ACP communication.
+Main class for setting up ACP protocol communication.
 
 **Methods:**
+
+- `registerTool(name, description, inputSchema, handler)`: Register a custom tool
+  - `name`: String - tool identifier
+  - `description`: String - tool description
+  - `inputSchema`: Object - JSON Schema for tool inputs
+  - `handler`: Async function - receives params object, returns result
+  - Returns: Tool definition object
+
 - `createInitializeResponse()`: Generate protocol initialization response
-- `createJsonRpcRequest(method, params)`: Create JSON-RPC request
-- `createJsonRpcResponse(id, result)`: Create JSON-RPC response
-- `createJsonRpcError(id, error)`: Create JSON-RPC error
+
+- `createJsonRpcRequest(method, params)`: Create JSON-RPC request object
+
+- `createJsonRpcResponse(id, result)`: Create JSON-RPC response object
+
+- `createJsonRpcError(id, error)`: Create JSON-RPC error object
+
 - `validateToolCall(toolName)`: Check if tool is whitelisted
-- `callTool(toolName, params)`: Execute a whitelisted tool
+
+- `async callTool(toolName, params)`: Execute a registered tool
 
 **Properties:**
-- `toolWhitelist`: Set of allowed tool names
-- `toolCallLog`: Array of executed tool calls
+
+- `toolWhitelist`: Set of registered tool names
+- `toolCallLog`: Array of executed tool calls with timestamps
 - `rejectedCallLog`: Array of rejected tool attempts
 
-### createSimulativeRetriever()
+## Example: Multiple Tools
 
-Factory function that returns a tool definition for simulative_retriever.
+```javascript
+import { ACPProtocol } from 'acpreact';
 
-**Returns:** Tool object with name, description, and inputSchema
+const acp = new ACPProtocol();
+
+// Register database tool
+acp.registerTool(
+  'query_database',
+  'Query the application database',
+  {
+    type: 'object',
+    properties: {
+      query: { type: 'string' }
+    },
+    required: ['query']
+  },
+  async (params) => {
+    // Your database logic here
+    return { data: [] };
+  }
+);
+
+// Register API tool
+acp.registerTool(
+  'call_api',
+  'Call an external API',
+  {
+    type: 'object',
+    properties: {
+      endpoint: { type: 'string' },
+      method: { type: 'string', enum: ['GET', 'POST'] }
+    },
+    required: ['endpoint', 'method']
+  },
+  async (params) => {
+    // Your API logic here
+    return { response: {} };
+  }
+);
+
+// Initialize and use
+const initResponse = acp.createInitializeResponse();
+console.log(initResponse.result.agentCapabilities);
+```
 
 ## License
 
