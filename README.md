@@ -1,6 +1,6 @@
 # acpreact - ACP SDK
 
-A lightweight SDK for setting up tools and managing ACP protocol communication. Allows opencode to call registered tools via the ACP protocol.
+A lightweight SDK for setting up tools and managing ACP protocol communication. Allows opencode and kilo CLI to call registered tools via the ACP protocol.
 
 ## Features
 
@@ -55,7 +55,7 @@ console.log(result);
 
 ### Using System Instructions
 
-Pass a system instruction to the ACPProtocol constructor. The instruction will be included in the initialization response and communicated to opencode:
+Pass a system instruction to the ACPProtocol constructor. The instruction will be included in the initialization response and communicated to opencode or kilo CLI:
 
 ```javascript
 import { ACPProtocol } from 'acpreact';
@@ -98,7 +98,7 @@ Main class for setting up ACP protocol communication.
 **Constructor:**
 
 - `new ACPProtocol(instruction)`: Initialize the protocol
-  - `instruction` (optional): String - system instruction to communicate to opencode
+  - `instruction` (optional): String - system instruction to communicate to opencode or kilo CLI
 
 **Methods:**
 
@@ -123,7 +123,7 @@ Main class for setting up ACP protocol communication.
 
 **Properties:**
 
-- `instruction`: String (optional) - system instruction communicated to opencode
+- `instruction`: String (optional) - system instruction communicated to opencode or kilo CLI
 - `toolWhitelist`: Set of registered tool names
 - `toolCallLog`: Array of executed tool calls with timestamps
 - `rejectedCallLog`: Array of rejected tool attempts

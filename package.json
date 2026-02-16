@@ -10,6 +10,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
     "@opencode-ai/plugin": "^1.2.5",
-    "@opencode-ai/sdk": "^1.2.5"
+    "@opencode-ai/sdk": "^1.2.5",
+    "@kilocode/cli": "^1.0.0"
   }
 }
