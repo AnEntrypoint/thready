@@ -1,4 +1,4 @@
-# Thready - ACP SDK
+# acpreact - ACP SDK
 
 A clean, production-ready SDK for implementing ACP (AI Control Protocol) with function-based chat analysis.
 
@@ -13,7 +13,7 @@ A clean, production-ready SDK for implementing ACP (AI Control Protocol) with fu
 ## Installation
 
 ```bash
-npm install thready
+npm install acpreact
 ```
 
 ## Quick Start
@@ -21,7 +21,7 @@ npm install thready
 ### Processing Chat Content
 
 ```javascript
-import { processChat } from 'thready';
+import { processChat } from 'acpreact';
 
 const chatContent = "[14:23] alice: Where is Taj Mahal?\n[14:24] bob: Main Street";
 const result = await processChat(chatContent, {
@@ -33,7 +33,7 @@ console.log(result.answer);
 ### Using ACPProtocol
 
 ```javascript
-import { ACPProtocol } from 'thready';
+import { ACPProtocol } from 'acpreact';
 
 const acp = new ACPProtocol();
 const response = acp.createInitializeResponse();
@@ -45,7 +45,7 @@ const result = await acp.callTool('simulative_retriever', {
 ### Creating Tool Definitions
 
 ```javascript
-import { createSimulativeRetriever } from 'thready';
+import { createSimulativeRetriever } from 'acpreact';
 
 const tool = createSimulativeRetriever();
 // Use in your ACP setup
