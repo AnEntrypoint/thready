@@ -1,18 +1,22 @@
 import { spawn } from 'child_process';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { EventEmitter } from 'events';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-class ACPProtocol {
+class ACPProtocol extends EventEmitter {
   constructor(instruction) {
+    super();
     this.messageId = 0;
     this.instruction = instruction;
     this.toolWhitelist = new Set();
+    this.toolSchemas = {};
+    this.toolDescriptions = {};
     this.toolCallLog = [];
     this.rejectedCallLog = [];
     this.tools = {};
+    this.cliProcess = null;
+    this.pendingRequests = new Map();
+    this.buffer = '';
+    this.initialized = false;
+    this.sessionId = null;
   }
 
   generateRequestId() {
@@ -20,84 +24,42 @@ class ACPProtocol {
   }
 
   createJsonRpcRequest(method, params) {
-    return {
-      jsonrpc: "2.0",
-      id: this.generateRequestId(),
-      method,
-      params,
-    };
+    return { jsonrpc: "2.0", id: this.generateRequestId(), method, params };
   }
 
   createJsonRpcResponse(id, result) {
-    return {
-      jsonrpc: "2.0",
-      id,
-      result,
-    };
+    return { jsonrpc: "2.0", id, result };
   }
 
   createJsonRpcError(id, error) {
-    return {
-      jsonrpc: "2.0",
-      id,
-      error: {
-        code: -32603,
-        message: error,
-      },
-    };
+    return { jsonrpc: "2.0", id, error: { code: -32603, message: error } };
   }
 
   registerTool(name, description, inputSchema, handler) {
     this.toolWhitelist.add(name);
     this.tools[name] = handler;
-    return {
-      name,
-      description,
-      inputSchema,
-    };
+    this.toolSchemas[name] = inputSchema;
+    this.toolDescriptions[name] = description;
+    return { name, description, inputSchema };
   }
 
-  createInitializeResponse() {
-    const agentCapabilities = Array.from(this.toolWhitelist).map(toolName => ({
-      type: "tool",
+  getToolsList() {
+    return Array.from(this.toolWhitelist).map(toolName => ({
       name: toolName,
-      whitelisted: true,
+      description: this.toolDescriptions[toolName],
+      inputSchema: this.toolSchemas[toolName],
     }));
-
-    const result = {
-      protocolVersion: "1.0",
-      serverInfo: {
-        name: "acpreact ACP Server",
-        version: "1.0.0",
-      },
-      securityConfiguration: {
-        toolWhitelistEnabled: true,
-        allowedTools: Array.from(this.toolWhitelist),
-        rejectionBehavior: "strict",
-      },
-      agentCapabilities,
-    };
-
-    if (this.instruction) {
-      result.instruction = this.instruction;
-    }
-
-    return {
-      jsonrpc: "2.0",
-      id: 0,
-      result,
-    };
   }
 
   validateToolCall(toolName) {
     if (!this.toolWhitelist.has(toolName)) {
       const availableTools = Array.from(this.toolWhitelist);
-      const error = `Tool not available. Only these tools are available: ${availableTools.join(', ')}`;
+      const error = `Tool not available. Available: ${availableTools.join(', ')}`;
       this.rejectedCallLog.push({
         timestamp: new Date().toISOString(),
         attemptedTool: toolName,
         reason: 'Not in whitelist',
-        availableTools: availableTools,
+        availableTools,
       });
       return { allowed: false, error };
     }
@@ -127,117 +89,201 @@ class ACPProtocol {
     throw new Error(`Unknown tool: ${toolName}`);
   }
 
-  async process(text, options = {}) {
-    const cli = options.cli || 'opencode';
-    const instruction = options.instruction || this.instruction || '';
-    
-    const toolsDesc = Array.from(this.toolWhitelist).map(name => {
-      const tool = this.tools[name];
-      return `- ${name}: Tool available`;
-    }).join('\n');
-
-    const prompt = `${instruction}
-
-Available tools:
-${toolsDesc}
-
-Text to analyze:
-${text}
-
-Analyze the text and call appropriate tools using the ACP protocol. Respond with JSON-RPC tool calls.`;
+  async start(cli = 'kilo') {
+    if (this.cliProcess) return this.sessionId;
 
     return new Promise((resolve, reject) => {
-      let output = '';
-      let errorOutput = '';
-
-      // Different CLIs have different invocation styles
-      let args;
-      let useStdin = false;
-      
-      if (cli === 'kilo') {
-        // kilo uses: kilo run <message>
-        args = ['run', prompt];
-      } else {
-        // opencode uses: opencode --stdin (with prompt via stdin)
-        args = ['--stdin'];
-        useStdin = true;
-      }
-
-      const child = spawn(cli, args, {
+      this.cliProcess = spawn('script', ['-q', '-c', `${cli} acp`, '/dev/null'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: process.cwd(),
-        timeout: 30000 // 30 second timeout
+        env: { ...process.env, TERM: 'dumb' },
       });
 
-      child.stdout.on('data', (data) => {
-        output += data.toString();
+      this.cliProcess.stdout.on('data', (data) => {
+        this.buffer += data.toString();
+        this.processBuffer();
       });
 
-      child.stderr.on('data', (data) => {
-        errorOutput += data.toString();
+      this.cliProcess.stderr.on('data', (data) => {
+        this.emit('stderr', data.toString());
       });
 
-      child.on('close', async (code) => {
-        if (code !== 0 && code !== null) {
-          reject(new Error(`CLI exited with code ${code}: ${errorOutput}`));
-          return;
-        }
-
-        try {
-          const toolCalls = this.parseToolCalls(output);
-          const results = [];
-          
-          for (const call of toolCalls) {
-            if (this.toolWhitelist.has(call.method)) {
-              const result = await this.callTool(call.method, call.params);
-              results.push({ tool: call.method, result });
-            }
-          }
-          
-          resolve({
-            text: output,
-            toolCalls: results,
-            logs: this.toolCallLog
-          });
-        } catch (e) {
-          resolve({
-            text: output,
-            error: e.message,
-            logs: this.toolCallLog
-          });
-        }
+      this.cliProcess.on('error', (error) => {
+        this.emit('error', error);
+        reject(error);
       });
 
-      child.on('error', (error) => {
-        reject(new Error(`Failed to spawn ${cli}: ${error.message}`));
+      this.cliProcess.on('close', (code) => {
+        this.emit('close', code);
+        this.cliProcess = null;
+        this.initialized = false;
+        this.sessionId = null;
       });
 
-      if (useStdin) {
-        child.stdin.write(prompt);
-        child.stdin.end();
-      }
+      const timeout = setTimeout(() => {
+        reject(new Error('ACP initialization timeout'));
+      }, 30000);
+
+      this.once('ready', () => {
+        clearTimeout(timeout);
+        resolve(this.sessionId);
+      });
+
+      setTimeout(() => this.createSession(), 500);
     });
   }
 
-  parseToolCalls(output) {
-    const calls = [];
-    const lines = output.split('\n');
-    
+  processBuffer() {
+    const lines = this.buffer.split('\n');
+    this.buffer = lines.pop() || '';
+
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      
-      try {
-        const json = JSON.parse(trimmed);
-        if (json.jsonrpc === '2.0' && json.method && json.params) {
-          calls.push({ method: json.method, params: json.params });
-        }
-      } catch (e) {
-        // Not JSON, skip
-      }
+      this.handleMessage(trimmed);
     }
+  }
+
+  handleMessage(line) {
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return;
+    }
+
+    if (msg.method === 'initialize') {
+      this.send(this.createInitializeResponse(msg.id));
+      this.initialized = true;
+    } else if (msg.id !== undefined && msg.result !== undefined) {
+      const resolver = this.pendingRequests.get(msg.id);
+      if (resolver) {
+        this.pendingRequests.delete(msg.id);
+        resolver(msg.result);
+      }
+      if (msg.id === 1 && msg.result?.sessionId) {
+        this.sessionId = msg.result.sessionId;
+        this.emit('ready');
+      }
+    } else if (msg.id !== undefined && msg.error !== undefined) {
+      const resolver = this.pendingRequests.get(msg.id);
+      if (resolver) {
+        this.pendingRequests.delete(msg.id);
+        resolver({ error: msg.error });
+      }
+    } else if (msg.method?.startsWith('tools/')) {
+      const toolName = msg.method.replace('tools/', '');
+      this.handleToolCall(msg.id, toolName, msg.params);
+    } else if (msg.method === 'session/update') {
+      this.emit('update', msg.params);
+    }
+  }
+
+  async handleToolCall(id, toolName, params) {
+    try {
+      const result = await this.callTool(toolName, params);
+      this.send(this.createJsonRpcResponse(id, result));
+    } catch (e) {
+      this.send(this.createJsonRpcError(id, e.message));
+    }
+  }
+
+  send(msg) {
+    if (this.cliProcess && this.cliProcess.stdin.writable) {
+      this.cliProcess.stdin.write(JSON.stringify(msg) + '\n');
+    }
+  }
+
+  createInitializeResponse(id) {
+    const result = {
+      protocolVersion: 1,
+      capabilities: { tools: this.getToolsList() },
+      serverInfo: { name: 'acpreact', version: '1.0.0' },
+    };
+
+    if (this.instruction) {
+      result.instruction = this.instruction;
+    }
+
+    return { jsonrpc: "2.0", id, result };
+  }
+
+  createSession() {
+    this.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "session/new",
+      params: {
+        cwd: process.cwd(),
+        mcpServers: [],
+      },
+    });
+  }
+
+  getToolsDescription() {
+    const tools = this.getToolsList();
+    if (tools.length === 0) return '';
     
-    return calls;
+    return '\n\nAvailable tools:\n' + tools.map(t => 
+      `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.inputSchema)}`
+    ).join('\n');
+  }
+
+  async sendPrompt(content) {
+    if (!this.sessionId) {
+      throw new Error('No session. Call start() first.');
+    }
+
+    const reqId = this.generateRequestId();
+    const promptWithTools = this.instruction 
+      ? `${this.instruction}${this.getToolsDescription()}\n\nUser message: ${content}`
+      : content;
+
+    return new Promise((resolve) => {
+      this.pendingRequests.set(reqId, resolve);
+      this.send({
+        jsonrpc: "2.0",
+        id: reqId,
+        method: "session/prompt",
+        params: {
+          sessionId: this.sessionId,
+          prompt: [{ type: "text", text: promptWithTools }],
+        },
+      });
+
+      setTimeout(() => {
+        if (this.pendingRequests.has(reqId)) {
+          this.pendingRequests.delete(reqId);
+          resolve({ timeout: true });
+        }
+      }, 120000);
+    });
+  }
+
+  async process(text, options = {}) {
+    const cli = options.cli || 'kilo';
+
+    if (!this.cliProcess) {
+      await this.start(cli);
+    }
+
+    const result = await this.sendPrompt(text);
+
+    return {
+      text,
+      result,
+      toolCalls: this.toolCallLog.slice(-10),
+      logs: this.toolCallLog,
+    };
+  }
+
+  stop() {
+    if (this.cliProcess) {
+      this.cliProcess.kill();
+      this.cliProcess = null;
+    }
+    this.initialized = false;
+    this.sessionId = null;
   }
 }
 
